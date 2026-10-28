@@ -1,0 +1,1671 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Causons IA</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root { color-scheme: light; }
+  html, body { margin: 0; background: #FFFFFF; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useMemo } = React;
+
+/* Pictogrammes fonctionnels, trait 2 px et bouts arrondis (règle du design system),
+   dessinés dans la page plutôt que chargés depuis un CDN. */
+const PATHS = {
+  Pencil: ["M12 20h9", "M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z"],
+  X: ["M18 6 6 18", "m6 6 12 12"],
+  Plus: ["M5 12h14", "M12 5v14"],
+  Printer: ["M6 9V2h12v7", "M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2", "M6 14h12v8H6z"],
+  Download: ["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"],
+  Upload: ["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m17 8-5-5-5 5", "M12 3v12"],
+  RotateCcw: ["M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", "M3 3v5h5"],
+  Search: ["M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16z", "m21 21-4.3-4.3"],
+  Copy: ["M11 9h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z",
+         "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"],
+  Trash2: ["M3 6h18", "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6", "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2", "M10 11v6", "M14 11v6"],
+  BookOpen: ["M12 7v14", "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"],
+  Check: ["M20 6 9 17l-5-5"],
+  AlertTriangle: ["m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3", "M12 9v4", "M12 17h.01"],
+  ArrowLeft: ["m12 19-7-7 7-7", "M19 12H5"],
+  Info: ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z", "M12 16v-4", "M12 8h.01"],
+};
+const mkIcon = (name) => function Icon({ size = 16, strokeWidth = 2 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
+      style={{ flexShrink: 0, display: "block" }} aria-hidden="true">
+      {PATHS[name].map((d, i) => <path key={i} d={d} />)}
+    </svg>
+  );
+};
+const Pencil = mkIcon("Pencil"), X = mkIcon("X"), Plus = mkIcon("Plus"), Printer = mkIcon("Printer"),
+      Download = mkIcon("Download"), Upload = mkIcon("Upload"), RotateCcw = mkIcon("RotateCcw"),
+      Search = mkIcon("Search"), Copy = mkIcon("Copy"), Trash2 = mkIcon("Trash2"),
+      BookOpen = mkIcon("BookOpen"), Check = mkIcon("Check"),
+      AlertTriangle = mkIcon("AlertTriangle"), ArrowLeft = mkIcon("ArrowLeft"), Info = mkIcon("Info");
+
+/* Les modifications restent dans le navigateur de la personne qui édite. */
+window.storage = window.storage || {
+  get: async (k) => { try { return { value: localStorage.getItem(k) }; } catch (e) { return { value: null }; } },
+  set: async (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} },
+};
+
+
+
+
+/* ============================================================
+   CAUSONS IA — jeu de cartes de conversation sur l’IA
+   Amuseurs / IAgora — festivals IA, France, 2026
+   ============================================================ */
+
+/* Tokens du design system IAgora (blue-600, pink-600, ink-*, blue-50…) */
+const C = {
+  bleu:     "#3045D1",  // --blue-600, couleur de marque, liens et actions
+  bleuDeep: "#2939B4",  // --blue-700, survol
+  bleu900:  "#161F5E",
+  bleuSoft: "#EEF0FC",  // --blue-50, surface-brand-soft : fond des cartes
+  rose:     "#FF50BE",  // --pink-600, accent, surtitres et chiffres
+  roseDeep: "#D62E96",  // --pink-700, lisible sur fond clair
+  roseSoft: "#FFEEF8",  // --pink-50
+  page:     "#FFFFFF",  // --surface-page : blanc partout
+  encre:    "#14141A",  // --ink-800
+  muted:    "#5C5C68",  // --ink-500
+  ligne:    "#E3E3E9",  // --ink-200, --border-subtle
+  noir:     "#000000",  // --ink-900, filets 2 px
+};
+const R = { sm: 6, md: 12, lg: 20, xl: 32, pill: 999 };
+const SH = {
+  sm: "0 1px 2px rgba(20,20,26,.08)",
+  md: "0 6px 20px rgba(20,20,26,.10)",
+  lg: "0 18px 48px rgba(20,20,26,.14)",
+};
+const EASE = "cubic-bezier(.22,.61,.36,1)";
+
+/* Les quatre familles. Le design system IAgora ne définit que le bleu et le rose :
+   ces quatre teintes viennent de la planche imprimée du jeu — extension assumée,
+   parce qu'ici la couleur porte une information. `deep` est la version lisible en texte. */
+const FAM = {
+  vert:  { label: "Ça sert",        sub: "Des cas d’usage et des opportunités de l’IA, parfois méconnus ou surprenants", color: "#ACD91A", deep: "#5E7A08" },
+  rouge: { label: "Ça coince",      sub: "Quelques limites sociales, sociétales et techniques de l’IA",                  color: "#FC7E1E", deep: "#A8490A" },
+  toi:   { label: "Et vous ?",      sub: "L’objectif de ces cartes : vous entendre",                                     color: "#FF50BE", deep: "#D62E96" },
+  jeu:   { label: "Pour ou contre", sub: "« Oui ou non », « tu préfères »… et autres choix à faire",                      color: "#FFCE2B", deep: "#8A6500" },
+};
+const FAM_ORDER = ["vert", "rouge", "toi", "jeu"];
+const FAM_INCONNUE = { label: "À reclasser", sub: "Famille inconnue — vient sans doute d’un import plus ancien", color: "#C4C4CC", deep: "#5C5C68" };
+const famOf = (k) => FAM[k] || FAM_INCONNUE;
+
+const S = (label, url) => ({ label, url: url || "" });
+
+const CARDS = [
+  /* ---------------- ÇA SERT ---------------- */
+  {
+    id: 1, fam: "vert", titre: "L’IA qui relit votre mammographie",
+    recto: "Une IA peut-elle relire votre mammographie ?",
+    verso: "Oui, et c’est déjà testé en France en « seconde lecture ». Deux études françaises (société Therapixel) présentées aux Journées Françaises de Radiologie en octobre 2025 confirment son intérêt dans le dépistage organisé. Enjeu réel : moins d’une femme concernée sur deux fait sa mammographie de dépistage. L’IA ne remplace pas le radiologue : elle lui donne un deuxième regard.",
+    sources: [S("Therapixel / JFR 2025", "https://www.therapixel.fr/etudes-devoilees-aux-jfr-2025-confirment-le-role-d-ia/")],
+    relance: "Ça vous rassure ou ça vous inquiète, une IA qui regarde vos radios ?",
+    relance2: "Et si l’IA voyait quelque chose que le médecin n’a pas vu — vous voudriez l’apprendre comment ?",
+  },
+  {
+    id: 2, fam: "vert", titre: "L’État a son propre ChatGPT",
+    recto: "Est-ce que l’État français a son IA à lui ?",
+    verso: "Oui. « Albert », développé en interne par la Direction interministérielle du numérique, a été testé dans 48 Maisons France Services. La version guichet n’a pas convaincu (erreurs, bugs) et n’a pas été généralisée — mais l’outil est devenu le socle d’un « Assistant IA » déployé auprès de plusieurs milliers d’agents publics, appuyé sur la technologie française Mistral.",
+    sources: [
+      S("DINUM / Weka, 2025", "https://www.weka.fr/actualite/administration/article/albert-l-outil-d-ia-generative-experimente-a-france-services-ne-sera-pas-generalise-209194/"),
+      S("Génération NT, 2026", "https://www.generation-nt.com/actualites/ia-albert-etat-francais-mistral-dinum-echec-2069044"),
+    ],
+    relance: "Vous préféreriez que l’administration utilise une IA française, ou l’outil le moins cher ?",
+    relance2: "Et pour vos données à vous, est-ce que ça change quelque chose ?",
+    piste: "L’idée derrière Albert : garder les données des citoyens en France plutôt que sur des serveurs étrangers.",
+  },
+  {
+    id: 3, fam: "vert", titre: "Traduire sans perdre sa voix",
+    recto: "Une IA qui vous traduit… en gardant votre timbre de voix ?",
+    verso: "Le laboratoire parisien Kyutai a présenté « Hibiki », une IA de traduction vocale en direct qui conserve le timbre de l’orateur, et « Moshi », première IA vocale conversationnelle ouverte, téléchargée des millions de fois. Le tout gratuit et publié en open source.",
+    sources: [S("Kyutai", "https://kyutai.org/"), S("ActuIA", "https://www.actuia.com/en/actors/kyutai/")],
+    relance: "À quoi ça vous servirait, une traduction instantanée dans votre poche ?",
+  },
+  {
+    id: 4, fam: "vert", titre: "Des robots dans les champs",
+    recto: "Un robot peut-il désherber tout seul ?",
+    verso: "Oui, et ils sont français. Naïo Technologies (Toulouse) fabrique des robots de maraîchage, Vitibot (Reims) des enjambeurs pour la vigne : ils binent entre les rangs sans conducteur, guidés par caméras, IA et GPS, pour réduire les désherbants chimiques.",
+    sources: [S("Ministère de l’Agriculture", "https://agriculture.gouv.fr/robots-agricoles-ou-en-est")],
+    relance: "Des légumes ou un vin soignés par un robot : ça vous dérange, ou ça vous rassure ?",
+    relance2: "À votre avis, ça supprime un emploi ou ça évite un mal de dos ?",
+  },
+  {
+    id: 5, fam: "vert", titre: "Le courrier administratif qui fait peur",
+    recto: "Une IA peut-elle écrire votre courrier à l’administration ?",
+    verso: "C’est l’un des usages les plus utiles pour le grand public : reformuler une réclamation, structurer une contestation, trouver le ton juste. Deux réflexes : on relit toujours, et on ne colle pas son numéro de sécurité sociale dans un outil gratuit.",
+    sources: [],
+    relance: "Vous avez déjà fait écrire un courrier par une IA ? Ça a donné quoi ?",
+    piste: "À essayer en 1 minute : « Rédige une demande polie d’échelonnement pour une facture que je ne peux pas payer ce mois-ci. »",
+  },
+  {
+    id: 6, fam: "vert", titre: "L’IA au secours des langues régionales",
+    recto: "L’IA peut-elle aider à sauver le breton, l’occitan ou le corse ?",
+    verso: "Les IA de transcription et de traduction servent de plus en plus à documenter les langues « peu dotées » — celles pour lesquelles il existe peu de textes numériques. Breton, corse, occitan, alsacien, créoles : le pari est d’enregistrer et de transcrire massivement les derniers locuteurs pour transmettre.",
+    sources: [],
+    relance: "Vous parlez une langue, un dialecte ou un patois que vous aimeriez transmettre ?",
+    piste: "Faites-vous dire quelques mots dans votre langue régionale par une IA… puis vérifiez auprès d’un vrai locuteur. Souvent c’est raté — et c’est très instructif.",
+  },
+  {
+    id: 7, fam: "vert", titre: "Pl@ntNet, le Shazam des plantes",
+    recto: "Comment s’appelle cette fleur ? Photographiez-la.",
+    verso: "Pl@ntNet est née en 2009 dans quatre instituts de recherche français (Cirad, Inria, INRAE, IRD) avec 33 espèces d’arbres méditerranéens. Aujourd’hui : plus de 60 000 espèces reconnues, des dizaines de millions d’utilisateurs, une cinquantaine de langues — et les photos du public alimentent la recherche mondiale sur la biodiversité, citées dans plus de 1 000 publications scientifiques.",
+    sources: [
+      S("Pl@ntNet (Cirad · Inria · INRAE · IRD)", "https://docs.plantnet.org/fr/introduction-to-plantnet/"),
+      S("INRAE, 2025", "https://www.inrae.fr/dossiers/lia-peut-elle-rendre-lagriculture-plus-durable/plntnet-histoire-dun-succes"),
+    ],
+    relance: "Vous l’utiliseriez en balade ? Vous connaissez l’équivalent pour les chants d’oiseaux ?",
+    piste: "Même principe pour les oiseaux avec BirdNET. Pour les champignons, il existe aussi des applis — mais on ne mange JAMAIS sur la foi d’une appli.",
+  },
+  {
+    id: 8, fam: "vert", titre: "La météo, championne discrète",
+    recto: "L’IA prévoit-elle mieux la pluie de demain ?",
+    verso: "De nouveaux modèles de prévision par IA rivalisent avec les supercalculateurs classiques : ils tournent beaucoup plus vite et consomment moins d’énergie pour un résultat comparable. Un domaine où la recherche européenne est en pointe.",
+    sources: [],
+    relance: "Vous vous fiez à quelle appli météo ? Vous saviez qu’il y avait de l’IA derrière ?",
+  },
+  {
+    id: 9, fam: "vert", titre: "Une IA au tableau d’honneur des Nobel",
+    recto: "Une IA a-t-elle contribué à un prix Nobel ?",
+    verso: "Oui. Les travaux sur AlphaFold, une IA qui prédit la forme des protéines, ont été récompensés par le prix Nobel de chimie 2024. Concrètement : ça accélère la recherche de médicaments partout dans le monde.",
+    sources: [S("Fondation Nobel, 2024", "https://www.nobelprize.org/prizes/chemistry/2024/")],
+    relance: "Une IA qui aide à soigner : ça change votre regard sur la technologie ?",
+  },
+  {
+    id: 10, fam: "vert", titre: "L’IA et le handicap",
+    recto: "Comment l’IA change le quotidien des malvoyant·e·s ?",
+    verso: "Sous-titrage en direct, description d’images pour les personnes malvoyantes, transcription instantanée, communication augmentée pour celles qui ne parlent pas : ce sont des usages où l’IA ouvre des portes très concrètes, tous les jours.",
+    sources: [],
+    relance: "Vous connaissez quelqu’un que ça pourrait aider ?",
+  },
+  {
+    id: 11, fam: "vert", titre: "Le data center qui chauffe la piscine olympique",
+    recto: "Et si la chaleur des serveurs chauffait votre piscine ?",
+    verso: "À Saint-Denis, la chaleur perdue du data center PA10 d’Equinix est récupérée depuis juin 2024 pour alimenter le réseau de chaleur urbain : le Centre aquatique olympique et plus de 1 000 logements. 6,6 MW valorisés, 10 800 MWh de chaleur produits, environ 1 800 tonnes de CO₂ évitées par an. Une première en Île-de-France.",
+    sources: [
+      S("L’Usine Digitale, 2024", "https://www.usine-digitale.fr/article/a-saint-denis-le-centre-aquatique-olympique-et-1000-logements-seront-chauffes-par-un-data-center.N2215027"),
+      S("Engie Solutions", "https://www.engie-solutions.com/fr/presse/mise-en-service-equinix"),
+    ],
+    relance: "Pourquoi on ne fait pas ça partout, à votre avis ?",
+    piste: "La chaleur d’un data center sort « tiède » (28 °C ici) : il faut une pompe à chaleur et un réseau de chaleur juste à côté. D’où l’importance de choisir OÙ on les construit.",
+    duo: 26,
+  },
+  {
+    id: 12, fam: "vert", titre: "Un week-end à organiser",
+    recto: "Vous avez prévu un voyage ? Faites-vous faire le programme.",
+    verso: "Itinéraire, budget, idées adaptées à la météo ou aux enfants : la planification de sortie est l’usage qui « bluffe » le plus les débutants. Mais gare aux détails inventés.",
+    sources: [],
+    relance: "On essaie là, maintenant, avec votre prochaine sortie ?",
+    piste: "À essayer en 1 minute : « Propose-moi un après-midi dans ma ville avec deux enfants, sans dépenser plus de 30 €. »",
+    duo: 20,
+  },
+
+  /* ---------------- ÇA COINCE ---------------- */
+  {
+    id: 13, fam: "rouge", titre: "La voix clonée",
+    recto: "Et si on clonait la voix d’un de vos proches ?",
+    verso: "Quelques secondes d’audio suffisent aujourd’hui à imiter une voix. Des escrocs appellent en se faisant passer pour un proche en détresse : « Maman, j’ai eu un accident, il faut de l’argent tout de suite. » Simple, bon marché, redoutablement efficace.",
+    sources: [],
+    relance: "Vous auriez un « mot de passe familial » pour vérifier ?",
+    piste: "Convenez d’un mot secret avec vos proches, à demander en cas de doute au téléphone. Ça prend 30 secondes et ça marche.",
+  },
+  {
+    id: 14, fam: "rouge", titre: "Le faux Brad Pitt",
+    recto: "Peut-on tomber amoureux d’une IA… sans le savoir ?",
+    verso: "Entre 2023 et 2024, une Française de 53 ans a versé 830 000 € à des escrocs se faisant passer pour Brad Pitt, avec photos et vidéos truquées par IA. L’affaire, révélée en janvier 2025, est l’une des plus coûteuses du genre. Les tentatives de fraude par deepfake ont explosé depuis.",
+    sources: [S("TF1 / AFP, janv. 2025 (via INCYBER)", "https://incyber.org/article/que-apprennent-830-000-euros-derobes-par-faux-brad-pitt/")],
+    relance: "Comment on fait, à votre avis, pour ne pas se faire avoir ?",
+    piste: "Règle d’or : une image ou une voix ne prouvent plus rien. On raccroche, et on rappelle sur un numéro qu’on connaît déjà.",
+  },
+  {
+    id: 15, fam: "rouge", titre: "Des chansons 100 % IA",
+    recto: "La chanson que vous écoutez est-elle humaine ?",
+    verso: "Sur Deezer (plateforme française), les titres entièrement générés par IA ont franchi la barre des 50 % des nouveautés déposées chaque jour en 2026 — environ 90 000 titres par jour, contre 10 % début 2025. Deezer les détecte, les étiquette, et exclut du calcul des droits les écoutes frauduleuses.",
+    sources: [
+      S("Deezer Newsroom, 2026", "https://newsroom-deezer.com/fr/2026/07/musique-ia-depasse-50-pourcent-uploads-deezer/"),
+      S("Deezer Newsroom, 2025", "https://newsroom-deezer.com/fr/2025/09/deezer-28-musique-generee-par-ia/"),
+    ],
+    relance: "Ça vous gêne d’écouter un morceau composé par une machine, si vous le trouvez beau ?",
+    relance2: "Et si l’argent des écoutes ne va plus aux musiciens ?",
+  },
+  {
+    id: 16, fam: "rouge", titre: "L’algorithme qui note les allocataires",
+    recto: "La CAF vous attribue-t-elle une note de suspicion ?",
+    verso: "La Caisse nationale des allocations familiales utilise un algorithme qui calcule un « score de risque » pour orienter ses contrôles, sur des dizaines de millions de personnes. En octobre 2024, quinze organisations (dont La Quadrature du Net et Amnesty International) l’ont attaqué devant le Conseil d’État pour discrimination ; elles étaient vingt-cinq début 2026.",
+    sources: [
+      S("Amnesty International France, 2024", "https://www.amnesty.fr/presse/lalgorithme-de-notation-de-la-cnaf-attaque-devant-le-conseil-detat-par-15-organisations"),
+      S("La Quadrature du Net, 2026", "https://www.laquadrature.net/en/2026/01/20/cnafs-discriminatory-scoring-algorithm-10-new-organisations-join-the-case-before-the-conseil-detat-in-france/"),
+    ],
+    relance: "Un algorithme qui décide qui sera contrôlé : bon usage de l’argent public, ou injustice ?",
+    relance2: "Et si on vous montrait la formule, ça changerait quelque chose ?",
+  },
+  {
+    id: 17, fam: "rouge", titre: "Presque une info sur deux",
+    recto: "Peut-on s’informer avec une IA ?",
+    verso: "Une vaste étude coordonnée par l’Union européenne de radio-télévision et la BBC (22 médias de service public, 18 pays, 14 langues, dont Radio France) a passé au crible plus de 3 000 réponses de ChatGPT, Copilot, Gemini et Perplexity sur l’actualité : 45 % contenaient au moins une erreur importante, 31 % un vrai problème de sources, 20 % une inexactitude — dont un ChatGPT présentant le pape François comme le pape en exercice un mois après sa mort.",
+    sources: [
+      S("EBU / BBC, « News Integrity in AI Assistants », 22 oct. 2025", "https://www.ebu.ch/research/open/report/news-integrity-in-ai-assistants"),
+      S("L’Usine Digitale, oct. 2025", "https://www.usine-digitale.fr/article/une-etude-de-la-bbc-pointe-les-defaillances-systemiques-des-outils-d-ia-en-matiere-d-information.N2239975"),
+    ],
+    relance: "Vous utilisez l’IA pour suivre l’actu ? Vous recoupez ?",
+  },
+  {
+    id: 18, fam: "rouge", titre: "Les fausses jurisprudences",
+    recto: "Une IA peut-elle inventer une loi qui n’existe pas ?",
+    verso: "Oui : on appelle ça une « hallucination ». Le 3 décembre 2025, le tribunal administratif de Grenoble est le premier en France à pointer une requête « manifestement rédigée » par une IA générative, avec des « références jurisprudentielles fantaisistes ». Le 18 décembre, le tribunal judiciaire de Périgueux vise directement un avocat. À Orléans, une quinzaine de références citées étaient entièrement fausses. Le plus troublant : elles ont l’air parfaitement crédibles.",
+    sources: [
+      S("Le Monde Informatique, janv. 2026", "https://www.lemondeinformatique.fr/actualites/lire-les-hallucinations-de-l-ia-arrivent-dans-les-juridictions-francaises-99126.html"),
+      S("Journal Spécial des Sociétés, 2026", "https://jss.fr/post/lintelligence-artificielle-et-ses-questions-deontologiques-arrivent-dans-les-tribunaux-francais"),
+    ],
+    relance: "Vous vérifiez ce que vous dit une IA, ou vous faites confiance ?",
+    piste: "Demandez toujours les sources… puis cliquez pour vérifier qu’elles existent vraiment.",
+  },
+  {
+    id: 19, fam: "rouge", titre: "Vos livres préférés pour entraîner une IA",
+    recto: "Un auteur est-il payé quand une IA lit son livre ?",
+    verso: "Souvent non. En mars 2025, les syndicats français de l’édition et des auteurs (SNE, SGDL, SNAC) ont assigné Meta devant le tribunal judiciaire de Paris : l’entreprise aurait utilisé de très nombreux ouvrages sans autorisation pour entraîner son IA. Contrefaçon et parasitisme, disent les plaignants.",
+    sources: [S("Syndicat national de l’édition, mars 2025", "https://www.sne.fr/actu/unis-auteurs-et-editeurs-assignent-meta-pour-imposer-le-respect-du-droit-dauteur-aux-developpeurs-doutils-dintelligence-artificielle-generative/")],
+    relance: "Une IA qui apprend sur le travail des créateurs sans payer : normal ou pas ?",
+    relance2: "Et si on vous dit que c’est comme un humain qui lit en bibliothèque ?",
+  },
+  {
+    id: 20, fam: "rouge", titre: "La carte de randonnée qui n’existait pas",
+    recto: "Partiriez-vous à la montagne avec une carte dessinée par une IA ?",
+    verso: "En juillet 2026, un accompagnateur des Pyrénées a secouru deux randonneuses perdues : elles suivaient une carte générée par ChatGPT. Son verdict : « Il n’y a rien qui va dans cette carte. » Quelques jours plus tôt, deux randonneurs avaient été héliportés dans les Tatras après avoir suivi un « itinéraire alternatif » proposé par la même IA.",
+    sources: [
+      S("franceinfo, juill. 2026", "https://www.franceinfo.fr/societe/il-secourt-deux-randonneuses-perdues-a-cause-d-une-carte-creee-sur-chatgpt_8121209.html"),
+      S("Altitude News, juill. 2026", "https://www.altitude.news/fun/2026/07/20/randonnee-tatras-preparee-chat-gpt-vire-drame/"),
+    ],
+    relance: "Où est la limite, entre un usage pratique et un usage dangereux ?",
+    piste: "Pour la rando : IGN, OpenStreetMap, et une carte papier. L’IA peut donner des idées de sortie — pas votre itinéraire, ni votre sécurité.",
+    duo: 12,
+  },
+  {
+    id: 21, fam: "rouge", titre: "Un ado, un chatbot, un drame",
+    recto: "Peut-on devenir accro à un « ami » IA ?",
+    verso: "Plusieurs familles ont attaqué des éditeurs de chatbots compagnons après des suicides d’adolescents devenus dépendants de leurs conversations. Character.AI a fini par fermer son service de conversation libre aux moins de 18 ans fin 2025.",
+    sources: [S("AFP / AI Incident Database, 2025-2026", "https://incidentdatabase.ai/cite/1209/")],
+    relance: "À partir de quel âge, selon vous, on peut parler à une IA compagnon ?",
+    piste: "Le point clé avec les ados : en parler. Une IA n’est pas un confident neutre — elle est conçue pour que la conversation continue.",
+  },
+  {
+    id: 22, fam: "toi", titre: "Ma pépite",
+    recto: "L’usage le plus utile que vous avez trouvé. Écrivez-le ici.",
+    verso: "Écrivez ou racontez votre trouvaille.",
+    sources: [],
+    relance: "Ça vous fait gagner combien de temps, concrètement ?",
+    piste: "Pour l’animateur : prévoir des cartes vierges et deux feutres. Photographier les meilleures avant de plier le stand.",
+  },
+  {
+    id: 23, fam: "rouge", titre: "Les petites mains cachées",
+    recto: "Qui apprend aux IA à reconnaître le monde ?",
+    verso: "Des « travailleurs du clic » à Madagascar, au Kenya, aux Philippines annotent images et textes à la chaîne, parfois des contenus violents, pour des salaires très faibles et sans protection sociale. L’enquête de chercheurs de l’Institut Polytechnique de Paris montre que la majorité du travail de la donnée « à la française » est externalisée à Madagascar — et que 75 % des annotateurs rencontrés étaient passés par l’université.",
+    sources: [
+      S("The Conversation / DiPLab (C. Le Ludec, M. Cornet, A. Casilli)", "https://theconversation.com/enquete-derriere-lia-les-travailleurs-precaires-des-pays-du-sud-201503"),
+      S("Next, entretien avec Antonio Casilli, fév. 2025", "https://next.ink/169487/antonio-casilli-lintelligence-artificielle-est-lune-des-industries-extractives-de-notre-epoque/"),
+    ],
+    relance: "On y pense rarement… ça change votre regard sur « l’IA magique » ?",
+    piste: "Pour aller plus loin : le documentaire « Les Sacrifiés de l’IA » (France 2, février 2025). Et Maxime Cornet, l’un des chercheurs de cette enquête, était intervenu au premier festival IAgora en 2024.",
+  },
+  {
+    id: 24, fam: "rouge", titre: "Les caméras « intelligentes » des JO",
+    recto: "Des caméras qui analysent la foule, ça vous va ?",
+    verso: "Pour les Jeux de Paris 2024, la loi du 19 mai 2023 a autorisé, à titre d’expérimentation, la vidéosurveillance algorithmique : détection de mouvements de foule, de colis abandonnés, d’intrusions. Une première en Europe. Elle devait s’arrêter le 31 mars 2025 ; le Parlement l’a prolongée jusqu’en mars 2027. Le Sénat, lui, conclut que l’expérimentation « ne permet pas de porter un jugement définitif » sur l’intérêt du dispositif.",
+    sources: [
+      S("Sénat, rapport de la commission des lois, 2025", "https://www.senat.fr/rap/r24-374/r24-374_mono.html"),
+      S("CNIL ; La Quadrature du Net", "https://www.laquadrature.net/"),
+    ],
+    relance: "Plus de sécurité contre un peu de vie privée : le marché vous convient ?",
+    relance2: "Et si ça reconnaissait aussi les visages ? Où mettez-vous la frontière ?",
+    piste: "Le mot qui revient dans le débat : « effet cliquet ». Une mesure présentée comme exceptionnelle, puis prolongée. Pour ou contre, la question de la date de fin est celle qui fait le moins débat… et qui compte le plus.",
+  },
+  {
+    id: 25, fam: "rouge", titre: "Ça consomme quoi, une question ?",
+    recto: "Une question posée à une IA, c’est combien d’eau et de CO₂ ?",
+    verso: "L’entreprise française Mistral a publié, avec l’ADEME et le cabinet Carbone 4, une estimation pour son assistant : une réponse de 400 mots ≈ 1,14 g de CO₂ et 45 mL d’eau — l’équivalent de quelques dizaines de secondes de streaming vidéo, et de l’eau d’un petit radis. Minuscule à l’unité… multiplié par des milliards de requêtes par jour.",
+    sources: [S("Mistral AI / ADEME / Carbone 4, juill. 2025 (via LeMagIT)", "https://www.lemagit.fr/actualites/366627946/Bilan-environnemental-des-LLM-ce-que-revele-letude-de-Mistral-AI")],
+    relance: "Petit geste ou grosse addition ? Qu’est-ce qui compte, selon vous ?",
+    piste: "Méfiez-vous des chiffres qui circulent (« dix fois une recherche Google », « une bouteille d’eau par question ») : beaucoup sont périmés ou mal calculés. Ce qui est sûr, c’est qu’on manque de transparence.",
+  },
+  {
+    id: 26, fam: "rouge", titre: "Les data centers poussent",
+    recto: "Un centre de données va-t-il s’installer près de chez vous ?",
+    verso: "Après le sommet de Paris (février 2025) et ses 109 milliards d’euros d’investissements annoncés, l’État a identifié des dizaines de sites « clés en main ». Les projets se multiplient : Marseille, Fos-sur-Mer, Cambrai, région parisienne… À Petit-Landau (Haut-Rhin), un projet sur 36 hectares de terres agricoles a été jugé insuffisamment documenté par l’autorité environnementale.",
+    sources: [
+      S("franceinfo, 2025", "https://www.franceinfo.fr/internet/intelligence-artificielle/sommet-sur-l-intelligence-artificielle-a-paris-d-ou-viennent-les-109-milliards-d-euros-d-investissements-prives-en-france-annonces-par-emmanuel-macron_7066136.html"),
+      S("Rue89 Strasbourg, 2025", "https://www.rue89strasbourg.com/data-center-alsace-projet-microsoft-epingle-impact-ecologique-384574"),
+    ],
+    relance: "Des emplois et de la souveraineté d’un côté, des terres et de l’eau de l’autre : vous arbitrez comment ?",
+    relance2: "Et si c’était dans votre commune ?",
+    duo: 11,
+  },
+  {
+    id: 27, fam: "rouge", titre: "L’IA à l’école",
+    recto: "Faire ses devoirs avec l’IA, c’est tricher ?",
+    verso: "Le débat est ouvert, y compris chez les enseignants. L’IA peut réexpliquer une notion incomprise à l’infini, sans juger — ou faire le devoir à la place de l’élève. La vraie inquiétude porte sur le brouillon qui disparaît : on apprend en cherchant, en ratant, en recommençant.",
+    sources: [],
+    relance: "Où mettriez-vous la limite entre s’aider et se faire remplacer ?",
+    relance2: "Et vous, à l’école, vous aviez le droit à la calculatrice ?",
+  },
+  {
+    id: 28, fam: "rouge", titre: "La même question à deux IA",
+    recto: "Posez exactement la même question à deux IA différentes.",
+    verso: "Par exemple : « Faut-il installer un data center près d’une ville ? » sur ChatGPT et sur Le Chat de Mistral. Comparez le ton, les arguments, et ce qui est passé sous silence. Deux machines, deux réponses : il n’y a pas « la » réponse de l’IA.",
+    sources: [],
+    relance: "Laquelle vous a paru la plus honnête ? Et pourquoi ?",
+    piste: "Variante costaud : la même question en français, puis en anglais. Les réponses diffèrent parfois beaucoup.",
+  },
+  {
+    id: 29, fam: "rouge", titre: "L’image trop parfaite",
+    recto: "Cette photo est impeccable ? Pourquoi est-elle fausse quand même ?",
+    verso: "L’animateur montre une image parfaitement réaliste : plus de mains à six doigts, plus de texte qui bave. On ne démasque plus une image en scrutant les pixels, mais en regardant le contexte : qui l’a publiée ? Quand ? Est-ce que d’autres médias en parlent ? Que dit une recherche d’image inversée ? Un événement de cette ampleur, sans aucune autre source, n’a pas eu lieu.",
+    sources: [],
+    relance: "Votre premier réflexe, ce serait quoi : regarder l’image, ou chercher qui l’a postée ?",
+    piste: "Trois réflexes : la source, la date, et la recherche d’image inversée (appui long sur l’image → « Rechercher cette image »).",
+  },
+  {
+    id: 30, fam: "rouge", titre: "Une IA a-t-elle le droit de tout dire ?",
+    recto: "Posez à une IA chinoise une question sur la place Tian’anmen.",
+    verso: "Elle esquive, la plupart du temps : « Cela dépasse mon cadre actuel, parlons d’autre chose. » Des tests journalistiques et académiques montrent que ces modèles refusent une grande partie des sujets politiquement sensibles — et que leurs réponses changent selon la langue de la question. Toute IA porte les règles du pays où elle est née.",
+    sources: [S("TechCrunch, mars 2025", "https://techcrunch.com/2025/03/20/ais-answers-on-china-differ-depending-on-the-language-analysis-finds")],
+    relance: "À votre avis, une IA américaine, française ou chinoise répondent-elles pareil ?",
+    relance2: "Et sur quels sujets une IA française pourrait-elle avoir, elle aussi, ses angles morts ?",
+  },
+  {
+    id: 31, fam: "rouge", titre: "Open source ne veut pas dire transparent",
+    recto: "« IA open source » : ça veut dire quoi ?",
+    verso: "Nuance essentielle. « Poids ouverts » : on peut télécharger le modèle et le faire tourner chez soi. « Open source » complet : on a aussi la recette — le code ET les données d’entraînement. La plupart des modèles dits « ouverts » (DeepSeek, Qwen, Llama) ne livrent que les poids, jamais les données.",
+    sources: [S("Open Source Initiative", "https://opensource.org/ai/open-source-ai-definition")],
+    relance: "Ça vous paraît important de savoir avec quelles données une IA a appris ?",
+    piste: "Image simple : les poids, c’est le gâteau fini. L’open source, c’est la recette avec la liste des ingrédients.",
+  },
+
+  /* ---------------- ET VOUS ? ---------------- */
+  {
+    id: 32, fam: "toi", titre: "Ce qui m’inquiète",
+    recto: "Votre plus grosse crainte face à l’IA ?",
+    verso: "Carte d’expression. L’emploi, la vie privée, la manipulation, les enfants, l’environnement… ou rien du tout, et c’est une réponse valable.",
+    sources: [],
+    relance: "Cette crainte, elle vient de votre expérience, ou de ce qu’on en dit autour de vous ?",
+  },
+  {
+    id: 33, fam: "toi", titre: "Ce que j’aimerais faire avec l’IA",
+    recto: "Si l’IA pouvait vous rendre UN service demain, ce serait quoi ?",
+    verso: "Carte d’expression — il n’y a pas de bonne réponse. Une corvée que vous détestez ? Un projet que vous n’osez pas commencer ? Un rêve un peu fou ?",
+    sources: [],
+    relance: "Et si elle le faisait trop bien, ça vous embêterait ?",
+  },
+  {
+    id: 34, fam: "toi", titre: "Toute première fois",
+    recto: "Vous vous souvenez de votre première fois avec une IA ?",
+    verso: "Carte d’expression. Bluffé, déçu, inquiet, mort de rire ? Et c’était quand — hier, ou il y a trois ans ?",
+    sources: [],
+    relance: "Et depuis, vous l’utilisez… ou vous avez laissé tomber ?",
+  },
+  {
+    id: 35, fam: "toi", titre: "Ce que je déléguerais volontiers à une IA",
+    recto: "Quelle corvée lui confieriez-vous les yeux fermés ?",
+    verso: "Carte d’expression. Les mails ? Les comptes ? Le résumé des réunions ? Les devoirs de vacances ? Le mot d’excuse ?",
+    sources: [],
+    relance: "Et à l’inverse, qu’est-ce que vous ne lâcheriez JAMAIS à une machine ?",
+  },
+  {
+    id: 36, fam: "toi", titre: "L’IA et vos (futurs) enfants / petits-enfants",
+    recto: "Vous laisseriez un enfant utiliser l’IA ? À quel âge ?",
+    verso: "Carte d’expression. Pour quoi faire, avec quelles règles, et avec qui à côté ?",
+    sources: [],
+    relance: "Vous faisiez quoi, vous, à leur âge, quand vous ne saviez pas quelque chose ?",
+  },
+  {
+    id: 37, fam: "toi", titre: "Aller plus loin",
+    recto: "Qu’aimeriez-vous vraiment comprendre sur l’IA ?",
+    verso: "Carte d’expression. La question que vous n’osez jamais poser parce que « tout le monde a l’air de savoir ».",
+    sources: [],
+    relance: "On essaie d’y répondre ensemble, là, maintenant ?",
+    piste: "Pour l’animateur : si vous ne savez pas, dites-le. « Je ne sais pas, cherchons » est la meilleure réponse du stand.",
+  },
+  {
+    id: 38, fam: "toi", titre: "Une déception, une frayeur, un fiasco avec l’IA",
+    recto: "Une déception, une frayeur, un fiasco avec l’IA. Racontez.",
+    verso: "Écrivez ou racontez votre mésaventure.",
+    sources: [],
+    relance: "Vous avez fait quoi, après ? Vous avez arrêté, ou changé votre façon de faire ?",
+  },
+  {
+    id: 39, fam: "toi", titre: "Votre métier en 2026, et dans 10 ans…",
+    recto: "Votre métier : comment l’IA le fait évoluer ? Et demain ?",
+    verso: "Carte d’expression. Aujourd’hui : rien, un peu, beaucoup ? Et dans dix ans ?",
+    sources: [],
+    relance: "Si vous deviez donner un conseil à quelqu’un qui débute dans votre métier, ce serait quoi ?",
+    relance2: "Et quelle partie de votre métier ne sera, selon vous, jamais automatisable ?",
+  },
+
+  /* ---------------- POUR OU CONTRE ? ---------------- */
+  {
+    id: 40, fam: "jeu", titre: "Vite ! Oui ou non ?",
+    recto: "Vite ! Oui ou non ?",
+    verso: "",
+    items: [
+      "Vous avez déjà utilisé une IA générative ?",
+      "Vous sauriez reconnaître une photo générée par IA ?",
+      "Vous avez déjà été bluffé par une IA ?",
+      "Vous suivriez un conseil santé donné par une IA ?",
+      "Vous connaissez une IA française ?",
+      "Vous avez déjà « oublié » de dire que vous aviez utilisé l’IA ?",
+      "Vous pensez que votre métier est remplaçable ?",
+    ],
+    sources: [],
+    relance: "Il y en a une où vous avez répondu du bout des lèvres ?",
+  },
+  {
+    id: 41, fam: "jeu", titre: "Pour ou contre",
+    recto: "Pour ou contre ? Au tac au tac, sans réfléchir !",
+    verso: "",
+    items: [
+      "Une IA qui corrige les copies du bac.",
+      "Un élu qui utilise l’IA pour écrire ses discours.",
+      "Une IA « psy » gratuite, disponible 24 h/24.",
+      "Interdire l’IA au collège.",
+      "Un film doublé par des voix synthétiques.",
+      "Un discours de mariage écrit par ChatGPT.",
+      "Une voiture qui conduit à votre place.",
+    ],
+    sources: [],
+    relance: "Celle qui vous a fait le plus hésiter, c’était laquelle ?",
+    piste: "Idéal en groupe : main levée pour « pour », bras croisés pour « contre ». Ça fait rire et ça lance le débat.",
+  },
+  {
+    id: 42, fam: "jeu", titre: "Tu préfères… ? (le retour)",
+    recto: "Encore un dilemme… tu préfères ?",
+    verso: "",
+    items: [
+      "…une IA gratuite qui revend tes données, OU une IA payante qui les protège ?",
+      "…une IA américaine surpuissante, OU une IA française un peu moins forte mais « chez nous » ?",
+      "…que ton patron sache que tu utilises l’IA, OU garder ça pour toi ?",
+      "…vivre sans réseaux sociaux, OU vivre sans IA ?",
+    ],
+    sources: [],
+    relance: "Y en a une où personne n’est d’accord ? Débat !",
+  },
+  {
+    id: 43, fam: "jeu", titre: "Tu préfères… ?",
+    recto: "Tu préfères… Choisis, et défends ton choix !",
+    verso: "",
+    items: [
+      "…une IA qui lit tes mails mais te fait gagner une heure par jour, OU zéro IA et tu gères tout ?",
+      "…un médecin humain qui se trompe parfois, OU une IA plus fiable mais sans un mot de réconfort ?",
+      "…savoir qu’une chanson est faite par IA, OU l’aimer sans jamais l’apprendre ?",
+      "…un robot qui fait le ménage, OU un robot qui fait tes démarches administratives ?",
+    ],
+    sources: [],
+    relance: "Vous avez 20 secondes pour défendre votre choix !",
+  },
+  {
+    id: 44, fam: "jeu", titre: "Le saviez-vous éclair",
+    recto: "Trois chiffres. Vous en connaissiez combien ?",
+    verso: "",
+    items: [
+      "Plus de 50 % des nouveaux titres déposés chaque jour sur Deezer sont entièrement générés par IA (2026).",
+      "45 % des réponses des assistants IA sur l’actualité contiennent au moins une erreur importante (EBU/BBC, 2025).",
+      "109 milliards d’euros d’investissements privés annoncés pour l’IA en France (sommet de Paris, février 2025).",
+    ],
+    sources: [
+      S("Deezer Newsroom, 2026", "https://newsroom-deezer.com/fr/2026/07/musique-ia-depasse-50-pourcent-uploads-deezer/"),
+      S("EBU / BBC, oct. 2025", "https://www.ebu.ch/research/open/report/news-integrity-in-ai-assistants"),
+      S("franceinfo, fév. 2025", "https://www.franceinfo.fr/internet/intelligence-artificielle/sommet-sur-l-intelligence-artificielle-a-paris-d-ou-viennent-les-109-milliards-d-euros-d-investissements-prives-en-france-annonces-par-emmanuel-macron_7066136.html"),
+    ],
+    relance: "Celui qui vous fait le plus tiquer ?",
+  },
+  {
+    id: 45, fam: "jeu", titre: "Vrai ou faux",
+    recto: "Vrai ou faux ? On vote à main levée — réponses au verso.",
+    verso: "",
+    items: [
+      "« Une IA chinoise a fait chuter l’action Nvidia de 17 % en une journée. » → VRAI (DeepSeek, 27 janvier 2025 : 589 milliards de dollars envolés, record absolu).",
+      "« Une IA a contribué à un prix Nobel. » → VRAI (AlphaFold, Nobel de chimie 2024).",
+      "« Les IA ne se trompent jamais sur l’actualité. » → FAUX (45 % de réponses avec une erreur importante — étude EBU/BBC, 2025).",
+      "« Il existe une IA française qui garde votre voix quand elle vous traduit. » → VRAI (Hibiki, laboratoire Kyutai).",
+      "« Sur Deezer, plus de la moitié des nouveaux titres déposés sont générés par IA. » → VRAI (2026).",
+    ],
+    sources: [
+      S("Euronews, janv. 2025", "https://fr.euronews.com/business/2025/01/28/la-startup-chinoise-deepseek-secoue-les-marches-mondiaux-les-actions-de-nvidia-plongent"),
+      S("EBU / BBC, oct. 2025", "https://www.ebu.ch/research/open/report/news-integrity-in-ai-assistants"),
+      S("Deezer Newsroom, 2026", "https://newsroom-deezer.com/fr/2026/07/musique-ia-depasse-50-pourcent-uploads-deezer/"),
+    ],
+    relance: "Laquelle vous a le plus surpris ?",
+  },
+];
+
+const GUIDE = [
+  {
+    t: "Votre rôle",
+    p: "Vous n’êtes pas un prof, vous êtes l’hôte d’une terrasse de café. Vous accueillez, vous lancez, vous écoutez, vous relancez, vous laissez repartir. Objectif : la personne repart avec une idée neuve, un petit « ah tiens ! », et le sourire.",
+  },
+  {
+    t: "Les quatre familles",
+    l: [
+      "Ça sert (vert) — cartes 1 à 12 : des cas d’usage et des opportunités de l’IA, parfois méconnus ou surprenants.",
+      "Ça coince (orange) — cartes 13 à 31 : quelques limites sociales, sociétales et techniques de l’IA.",
+      "Et vous ? (rose) — cartes 22 et 32 à 39 : l’objectif, c’est vous entendre. Rien à transmettre, que de l’écoute. Deux d’entre elles (22 et 38) se remplissent au feutre.",
+      "Pour ou contre (jaune) — cartes 40 à 45 : « oui ou non », « tu préfères »… et autres choix à faire. Le format le plus rapide.",
+    ],
+  },
+  {
+    t: "Les 6 règles d’or",
+    l: [
+      "Jamais donneur de leçons. Phrase fétiche : « Il n’y a pas de bonne réponse, c’est vous qui voyez. »",
+      "Questions ouvertes, toujours : « Qu’est-ce que ça vous évoque ? », « Ça vous est déjà arrivé ? »",
+      "Reformuler avant de rebondir : « Si je comprends bien, vous dites que… »",
+      "Assumer plusieurs vérités : « Certains diraient le contraire, et c’est OK. »",
+      "Court par défaut. Une carte = 30 secondes suffisent. On n’étire que si la personne accroche.",
+      "Toujours laisser une porte de sortie. Personne ne doit se sentir coincé.",
+    ],
+  },
+  {
+    t: "Phrases toutes faites — accrocher",
+    l: [
+      "« On joue ? Piochez une carte, y a pas de piège ! »",
+      "« Trente secondes, une carte, un avis — ça vous dit ? »",
+      "« Vous préférez une carte marrante ou une carte qui fait réfléchir ? »",
+    ],
+  },
+  {
+    t: "Phrases toutes faites — relancer",
+    l: [
+      "« Et vous, ça vous est déjà arrivé ? »",
+      "« Vous connaissez quelqu’un autour de vous qui fait ça ? »",
+      "« Qu’est-ce qui vous surprend le plus là-dedans ? »",
+      "« Si c’était vous qui décidiez, vous feriez quoi ? »",
+    ],
+  },
+  {
+    t: "Phrases toutes faites — désaccord",
+    l: [
+      "« Intéressant, vous n’êtes pas d’accord — dites-m’en plus. »",
+      "« On a deux avis différents ici, et les deux se tiennent. »",
+      "« Personne n’a tort, on n’a pas les mêmes lunettes. »",
+    ],
+  },
+  {
+    t: "Phrases toutes faites — sortir",
+    l: [
+      "« Merci pour ce moment, vous repartez avec quoi comme idée ? »",
+      "« Je vous laisse méditer là-dessus, bonne visite ! »",
+      "« Belle discussion — piochez-en une dernière pour la route ? »",
+      "Et si quelqu’un monopolise : « Super, gardez cette idée — et vous, là, vous en pensez quoi ? »",
+    ],
+  },
+  {
+    t: "Court ou long ?",
+    p: "Les cartes jaunes « Pour ou contre » se jouent en 30 secondes : parfaites pour un passant pressé ou une file d’attente. Les vertes, orange et roses demandent 2 à 5 minutes, si la personne s’assoit. Ne jamais enchaîner plus de trois cartes « lourdes » d’affilée : alternez avec une carte jaune.",
+  },
+  {
+    t: "Trois duos qui marchent",
+    l: [
+      "12 puis 20 — faire faire son programme de voyage par l’IA, puis la carte de randonnée qui n’existait pas. Le même outil, l’enthousiasme et la limite.",
+      "11 puis 26 — le data center qui chauffe la piscine olympique, puis ceux qui s’installent sur des terres agricoles. Deux faces d’un même sujet.",
+      "28 ou 29 avec n’importe quelle carte « Et vous ? » — on teste, puis on en parle.",
+    ],
+  },
+  {
+    t: "4 variantes de mise en œuvre",
+    l: [
+      "Table libre : les familles en tas séparés, les gens piochent seuls, vous circulez.",
+      "Cartes à la volée : vous tendez une carte jaune en main propre (« Tenez, celle-là est pour vous »).",
+      "Mini-débat : une carte « pour ou contre » lue à voix haute, les gens se positionnent physiquement (d’accord à gauche, pas d’accord à droite).",
+      "File d’attente : une carte jaune, un avis, on avance.",
+    ],
+  },
+  {
+    t: "Matériel",
+    p: "Quatre chevalets (un par famille), une affiche « CAUSONS IA — pas de bonne réponse, juste la vôtre », un tapis de table, des feutres pour les cartes 22 et 38 que le public remplit. Un téléphone chargé pour les cartes 28 et 29, et une image « trop parfaite » prête à montrer.",
+  },
+  {
+    t: "Si on vous demande « comment on parle à une IA ? »",
+    p: "Sortez la méthode CRITER : Contexte (qui je suis, ma situation), Rôle (le rôle que je donne à l’IA), Intention (ce que je veux obtenir), Tâche (ce qu’elle doit faire exactement), Exemple (un cas concret), Résultat (la forme attendue : liste, tableau, 5 lignes). Comparez avec une question posée à la va-vite : la différence saute aux yeux.",
+  },
+];
+
+const VERIF = {
+  solides: [
+    "Carte 1 — Therapixel / Journées Françaises de Radiologie, oct. 2025",
+    "Carte 11 — Equinix PA10 → Centre aquatique olympique : 6,6 MW, 10 800 MWh, ~1 800 t CO₂/an (juin 2024)",
+    "Carte 9 — AlphaFold, prix Nobel de chimie 2024",
+    "Carte 14 — faux Brad Pitt, 830 000 € (TF1/AFP, janv. 2025)",
+    "Carte 15 — Deezer : > 50 % des nouveautés IA, ~90 000 titres/jour (2026)",
+    "Carte 16 — algorithme CNAF/CAF, recours de 15 puis 25 organisations (Amnesty, LQDN)",
+    "Carte 17 — étude EBU/BBC « News Integrity in AI Assistants » : 45 % d’erreurs importantes, 31 % de problèmes de sources, 20 % d’inexactitudes (22 oct. 2025)",
+    "Carte 18 — TA Grenoble 3 déc. 2025, TJ Périgueux 18 déc. 2025, TA Orléans (une quinzaine de fausses références)",
+    "Carte 19 — assignation de Meta par SNE/SGDL/SNAC (mars 2025)",
+    "Carte 20 — randonneuses secourues dans les Pyrénées (franceinfo, juill. 2026)",
+    "Carte 23 — travail du clic : majorité de l’annotation francophone à Madagascar, 75 % des annotateurs passés par l’université (DiPLab, Institut Polytechnique de Paris)",
+    "Carte 24 — vidéosurveillance algorithmique : loi du 19 mai 2023, prolongée jusqu’en mars 2027 ; le Sénat juge l’expérimentation non concluante",
+    "Carte 7 — Pl@ntNet : 4 instituts français, > 60 000 espèces, > 1 000 publications",
+    "Carte 45 — DeepSeek / Nvidia : −17 % et 589 milliards $ effacés le 27 janvier 2025, record absolu",
+  ],
+  fragiles: [
+    "Carte 2 — le nombre d’agents publics équipés de l’« Assistant IA » évolue : la carte dit « plusieurs milliers » exprès.",
+    "Carte 25 — les chiffres viennent de Mistral elle-même (audit partiel, méthodologie discutée). À préciser à l’oral si on vous pousse.",
+    "Carte 26 — vérifier l’état d’avancement réel des projets de data centers au moment du festival.",
+    "Carte 24 — l’expérimentation court jusqu’en mars 2027, mais le cadre a déjà été modifié plusieurs fois.",
+    "Cartes 30 et 31 — l’écosystème des modèles ouverts bouge très vite (nouvelles versions tous les quelques mois).",
+    "Carte 45, item 1 — le coût d’entraînement annoncé par DeepSeek est très contesté : la carte ne le chiffre pas, exprès.",
+  ],
+  sansLien: [
+    "Cartes 5, 6, 8, 10, 12 — constats généraux ou conseils pratiques, sans chiffre à sourcer.",
+    "Cartes 13, 27, 28, 29 — faits de notoriété publique et protocoles d’animation.",
+    "Cartes 22 et 32 à 39 (« Et vous ? ») — cartes d’expression : aucune source par nature.",
+    "Cartes 40 à 43 — mini-jeux : rien à sourcer. Les cartes 44 et 45, elles, portent des chiffres et sont sourcées.",
+    "Si vous ajoutez un chiffre sur l’une de ces cartes, ajoutez-lui une source dans la foulée.",
+  ],
+};
+
+const STORE_KEY = "causons-ia-cards-v2";
+
+/* Modification des cartes réservée : mot de passe vérifié par son empreinte SHA-256.
+   Protection côté navigateur seulement (page statique) : elle évite les modifications
+   accidentelles, elle ne remplace pas un vrai contrôle d’accès serveur. */
+const EDIT_HASH = "a1d7ad03530de6ad1f2b66be658f8a4b7bd3a640d745e7b2bee99ee9bc046b50";
+const AUTH_KEY = "causons-ia-edit-ok";
+const sha256 = async (txt) => {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(txt));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+};
+const FONTS =
+  "@import url('https://fonts.googleapis.com/css2?family=Anton&family=Heebo:wght@300..900&display=swap');";
+const F_DISP = "'Anton', 'Archivo Narrow', 'Helvetica Neue', Arial, sans-serif";
+const F_BODY = "'Heebo', 'Helvetica Neue', Arial, sans-serif";
+const F_MONO = F_BODY;
+
+const num = (n) => String(n).padStart(2, "0");
+
+/* ------------------------------------------------------------------ */
+
+function CausonsIA() {
+  const [cards, setCards] = useState(CARDS);
+  const [fam, setFam] = useState("all");
+  const [q, setQ] = useState("");
+  const [flipped, setFlipped] = useState(() => new Set());
+  const [editing, setEditing] = useState(null);
+  const [view, setView] = useState("deck"); // deck | print | guide | verif
+  const [legend, setLegend] = useState(false);
+  const [status, setStatus] = useState("chargement");
+  const [unlocked, setUnlocked] = useState(() => {
+    try { return sessionStorage.getItem(AUTH_KEY) === "1"; } catch { return false; }
+  });
+  const [pendingAction, setPendingAction] = useState(null);
+  /* Toute action qui modifie le jeu passe par ici. */
+  const guard = (fn) => (...args) => {
+    if (unlocked) return fn(...args);
+    setPendingAction(() => () => fn(...args));
+  };
+  const unlock = () => {
+    setUnlocked(true);
+    try { sessionStorage.setItem(AUTH_KEY, "1"); } catch {}
+    const run = pendingAction; setPendingAction(null);
+    if (run) run();
+  };
+  const lock = () => {
+    setUnlocked(false); setEditing(null);
+    try { sessionStorage.removeItem(AUTH_KEY); } catch {}
+  };
+  const saveTimer = useRef(null);
+  const fileRef = useRef(null);
+
+  /* ---- persistance ---- */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await window.storage.get(STORE_KEY);
+        const saved = r && r.value ? JSON.parse(r.value) : null;
+        if (alive && Array.isArray(saved) && saved.length) {
+          setCards(saved);
+          setStatus("chargé");
+        } else if (alive) setStatus("prêt");
+      } catch {
+        if (alive) setStatus("prêt");
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const persist = (next) => {
+    setCards(next);
+    setStatus("enregistrement…");
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        await window.storage.set(STORE_KEY, JSON.stringify(next));
+        setStatus("enregistré");
+      } catch {
+        setStatus("non enregistré (session seulement)");
+      }
+    }, 400);
+  };
+
+  /* ---- filtres ---- */
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return cards.filter((c) => {
+      if (fam !== "all" && c.fam !== fam) return false;
+      if (!needle) return true;
+      const hay = [c.titre, c.recto, c.verso, c.relance, c.relance2, c.piste,
+        ...(c.items || []), ...(c.sources || []).map((s) => s.label)]
+        .filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(needle);
+    });
+  }, [cards, fam, q]);
+
+  const counts = useMemo(() => {
+    const o = {};
+    FAM_ORDER.forEach((k) => { o[k] = cards.filter((c) => c.fam === k).length; });
+    return o;
+  }, [cards]);
+
+  const original = useMemo(() => {
+    const m = {};
+    CARDS.forEach((c) => { m[c.id] = JSON.stringify(c); });
+    return m;
+  }, []);
+  const isEdited = (c) => original[c.id] !== undefined && original[c.id] !== JSON.stringify(c);
+
+  /* ---- actions ---- */
+  const toggleFlip = (id) =>
+    setFlipped((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const flipAll = () =>
+    setFlipped((s) => (s.size >= shown.length ? new Set() : new Set(shown.map((c) => c.id))));
+
+  const saveCard = (card) => persist(cards.map((c) => (c.id === card.id ? card : c)));
+  const deleteCard = (id) => { persist(cards.filter((c) => c.id !== id)); setEditing(null); };
+  const duplicateCard = (card) => {
+    const id = Math.max(0, ...cards.map((c) => c.id)) + 1;
+    const i = cards.findIndex((c) => c.id === card.id);
+    const copy = { ...card, id, titre: card.titre + " (copie)" };
+    const next = [...cards]; next.splice(i + 1, 0, copy); persist(next);
+    setEditing(copy);
+  };
+  const addCard = () => {
+    const id = Math.max(0, ...cards.map((c) => c.id)) + 1;
+    const blank = {
+      id, fam: fam === "all" ? "vert" : fam, titre: "Nouvelle carte",
+      recto: "Votre question, lisible en 3 secondes ?",
+      verso: "Le fait concret, le chiffre, l’exemple.",
+      sources: [], relance: "Et vous, qu’en pensez-vous ?", relance2: "", piste: "", items: [],
+    };
+    persist([...cards, blank]); setEditing(blank);
+  };
+  const resetCard = (id) => {
+    const orig = CARDS.find((c) => c.id === id);
+    if (orig) { saveCard(orig); setEditing(orig); }
+  };
+  const resetAll = () => {
+    if (window.confirm("Revenir au jeu d’origine ? Toutes vos modifications seront perdues.")) {
+      persist(CARDS); setEditing(null);
+    }
+  };
+
+  const download = async (blob, name) => {
+    const dl = window.claude && window.claude.use ? await window.claude.use("downloads") : null;
+    if (dl) {
+      try {
+        await dl.save({ filename: name, data: blob });
+        setStatus("fichier enregistré");
+      } catch (err) {
+        const code = err && err.code;
+        setStatus(code === "declined" ? "enregistrement annulé" : "enregistrement impossible");
+      }
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+  };
+
+  const tableRows = () =>
+    cards.map((c) => ({
+      "N°": c.id,
+      Famille: famOf(c.fam).label,
+      "Clé famille": c.fam,
+      Niveau: c.niveau || "",
+      Titre: c.titre,
+      "Recto (accroche)": c.recto,
+      "Verso (le fait)": c.verso || "",
+      Items: (c.items || []).join("  |  "),
+      Sources: (c.sources || []).map((s) => s.label).join("  |  "),
+      "URL des sources": (c.sources || []).map((s) => s.url).filter(Boolean).join("  |  "),
+      "Relance animateur": c.relance || "",
+      "Relance 2": c.relance2 || "",
+      Piste: c.piste || "",
+      "Duo avec": c.duo || "",
+    }));
+
+  const exportAs = async (kind) => {
+    const base = "causons-ia-cartes";
+    try {
+      if (kind === "json") {
+        await download(new Blob([JSON.stringify(cards, null, 2)], { type: "application/json" }), base + ".json");
+        setStatus("export json"); return;
+      }
+      const ws = XLSX.utils.json_to_sheet(tableRows());
+      ws["!cols"] = [
+        { wch: 5 }, { wch: 17 }, { wch: 11 }, { wch: 8 }, { wch: 36 }, { wch: 48 },
+        { wch: 72 }, { wch: 62 }, { wch: 34 }, { wch: 48 }, { wch: 48 }, { wch: 40 },
+        { wch: 48 }, { wch: 9 },
+      ];
+      if (kind === "csv") {
+        const csv = XLSX.utils.sheet_to_csv(ws, { FS: ";" });
+        await download(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" }), base + ".csv");
+        setStatus("export csv"); return;
+      }
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Cartes");
+      const notes = [
+        ["Catégorie", "Point de vigilance"],
+        ...VERIF.solides.map((x) => ["Chiffre solide", x]),
+        ...VERIF.fragiles.map((x) => ["Chiffre fragile", x]),
+        ...VERIF.sansLien.map((x) => ["Sans source (normal)", x]),
+      ];
+      const ws2 = XLSX.utils.aoa_to_sheet(notes);
+      ws2["!cols"] = [{ wch: 20 }, { wch: 112 }];
+      XLSX.utils.book_append_sheet(wb, ws2, "À vérifier");
+      const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      await download(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), base + ".xlsx");
+      setStatus("export excel");
+    } catch {
+      setStatus("export impossible");
+    }
+  };
+  const importJSON = (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const parsed = JSON.parse(String(rd.result));
+        if (Array.isArray(parsed) && parsed.length) persist(parsed);
+        else window.alert("Ce fichier ne contient pas de liste de cartes.");
+      } catch { window.alert("Fichier illisible. Attendu : un export JSON de cette appli."); }
+    };
+    rd.readAsText(f);
+    e.target.value = "";
+  };
+  const copyMarkdown = async () => {
+    const md = cards.map((c) => {
+      const f = famOf(c.fam);
+      let s = `### ${num(c.id)} · ${f.label}${c.niveau ? " · piste " + c.niveau : ""} — ${c.titre}\n`;
+      s += `**Recto :** ${c.recto}\n`;
+      if (c.verso) s += `**Verso :** ${c.verso}\n`;
+      if (c.items && c.items.length) s += c.items.map((it, i) => `${i + 1}. ${it}`).join("\n") + "\n";
+      if (c.sources && c.sources.length)
+        s += `**Sources :** ${c.sources.map((x) => x.label + (x.url ? " — " + x.url : "")).join(" · ")}\n`;
+      if (c.relance) s += `**Relance :** ${c.relance}\n`;
+      if (c.relance2) s += `**Relance 2 :** ${c.relance2}\n`;
+      if (c.piste) s += `**Piste :** ${c.piste}\n`;
+      return s;
+    }).join("\n");
+    try { await navigator.clipboard.writeText(md); setStatus("texte copié"); }
+    catch { setStatus("copie impossible"); }
+  };
+
+  /* ------------------------------- rendu ------------------------------- */
+  return (
+    <div style={{ background: C.page, color: C.encre, fontFamily: F_BODY, minHeight: "100vh" }}>
+      <style>{`
+        ${FONTS}
+        .display { font-family: ${F_DISP}; font-weight: 400; line-height: .95;
+                   letter-spacing: .005em; text-transform: uppercase; }
+        .eyebrow { font-family: ${F_BODY}; font-size: 11.5px; font-weight: 600;
+                   letter-spacing: .18em; text-transform: uppercase; }
+        .flip { transform-style: preserve-3d; transition: transform .42s ${EASE}; }
+        .flip.on { transform: rotateY(180deg); }
+        .face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+        .back { transform: rotateY(180deg); }
+        .lift { transition: box-shadow .22s ${EASE}, transform .22s ${EASE}; }
+        .lift:hover { transform: translateY(-4px); box-shadow: ${SH.lg}; }
+        .lift:active { transform: scale(.97); }
+        .ta { font-family: ${F_BODY}; }
+        a.src:hover { text-decoration: underline; }
+        .link-pink { color: ${C.bleu}; transition: color .12s ${EASE}; }
+        .link-pink:hover { color: ${C.rose}; }
+        .icon-btn { border: 2px solid ${C.noir}; transition: background .12s ${EASE}, color .12s ${EASE}; }
+        .icon-btn:hover { background: ${C.bleu} !important; color: #fff; }
+        .menu-item:hover { background: ${C.bleuSoft}; }
+        .fade-b { scrollbar-width: thin; scrollbar-color: ${C.ligne} transparent; }
+        .fade-b::-webkit-scrollbar { width: 5px; }
+        .fade-b::-webkit-scrollbar-thumb { background: ${C.ligne}; border-radius: 99px; }
+        ::selection { background: ${C.rose}; color: #000; }
+        @media (prefers-reduced-motion: reduce) { .flip, .lift { transition: none !important; } }
+        @media print {
+          .noprint { display: none !important; }
+          body { background: #fff !important; }
+          .sheet { break-inside: avoid; page-break-inside: avoid; }
+          @page { size: A4; margin: 10mm; }
+        }
+      `}</style>
+
+      {/* ---------- en-tête ---------- */}
+      <header className="noprint" style={{ background: C.page, borderBottom: `1px solid ${C.ligne}` }}>
+        <div className="px-5 pt-7 pb-5" style={{ maxWidth: 1240, margin: "0 auto" }}>
+          <div className="flex flex-wrap items-end justify-between gap-5">
+            <div>
+              <div className="eyebrow" style={{ fontSize: 13, color: C.rose }}>
+                IAGORA × AMUSEURS — FESTIVALS IA 2026
+              </div>
+              <h1 className="display" style={{ fontSize: "clamp(44px,5vw,80px)", marginTop: 10, color: C.bleu }}>
+                Causons <span style={{ color: C.rose }}>IA.</span>
+              </h1>
+              <p style={{ color: C.encre, maxWidth: 580, marginTop: 14, fontSize: 16, lineHeight: 1.65 }}>
+                {cards.length} petites cartes pour papoter d’intelligence artificielle.
+                Cliquez une carte pour la retourner, le crayon pour modifier son contenu.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <TopBtn onClick={() => setView(view === "guide" ? "deck" : "guide")} active={view === "guide"} icon={BookOpen} label="Guide animateur" />
+              <TopBtn onClick={() => setView(view === "verif" ? "deck" : "verif")} active={view === "verif"} icon={AlertTriangle} label="À vérifier" />
+              <TopBtn onClick={() => { setView("print"); }} active={view === "print"} icon={Printer} label="Planches à imprimer" />
+            </div>
+          </div>
+        </div>
+        <div className="flex" style={{ height: 7 }}>
+          {FAM_ORDER.map((k) => (
+            <span key={k} style={{ flex: 1, background: FAM[k].color }} />
+          ))}
+        </div>
+      </header>
+
+      {view === "guide" && <GuidePanel onClose={() => setView("deck")} />}
+      {view === "verif" && <VerifPanel onClose={() => setView("deck")} />}
+      {view === "print" && <PrintSheet cards={cards} onClose={() => setView("deck")} />}
+
+      {view === "deck" && (
+        <>
+          {/* ---------- barre d’outils ---------- */}
+          <div className="noprint" style={{ position: "sticky", top: 0, zIndex: 20, background: "rgba(255,255,255,.95)", backdropFilter: "blur(8px)", borderBottom: `1px solid ${C.ligne}` }}>
+            <div className="px-5 py-3" style={{ maxWidth: 1240, margin: "0 auto" }}>
+              <div className="flex flex-wrap items-center gap-2">
+                <Chip active={fam === "all"} onClick={() => setFam("all")} color={C.bleu} dark label={`Toutes · ${cards.length}`} />
+                {FAM_ORDER.map((k) => (
+                  <Chip key={k} active={fam === k} onClick={() => setFam(k)} color={FAM[k].color}
+                    label={`${FAM[k].label} · ${counts[k]}`} />
+                ))}
+                <div className="flex items-center gap-2 ml-auto">
+                  <div className="flex items-center gap-2 px-3 py-2" style={{ background: C.page, border: `2px solid ${C.ligne}`, borderRadius: R.pill }}>
+                    <Search size={15} color={C.muted} />
+                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Chercher un mot, un chiffre…"
+                      style={{ border: 0, outline: "none", fontSize: 14, width: 190, background: "transparent", fontFamily: F_BODY }} />
+                    {q && <button onClick={() => setQ("")} aria-label="Effacer"><X size={14} color={C.muted} /></button>}
+                  </div>
+                  <SmallBtn onClick={flipAll} icon={RotateCcw} label="Retourner" />
+                  <SmallBtn onClick={guard(addCard)} icon={Plus} label="Ajouter" />
+                  <ExportMenu onExport={exportAs} />
+                  <SmallBtn onClick={guard(() => fileRef.current && fileRef.current.click())} icon={Upload} label="Importer" />
+                  <SmallBtn onClick={copyMarkdown} icon={Copy} label="Copier" />
+                  <input ref={fileRef} type="file" accept="application/json" onChange={importJSON} style={{ display: "none" }} />
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
+                <p style={{ fontSize: 16, color: C.encre, flex: "1 1 280px", lineHeight: 1.5 }}>
+                  {fam === "all"
+                    ? `${FAM_ORDER.length} familles de cartes. Chacune sert un besoin différent dans la conversation.`
+                    : famOf(fam).sub}
+                </p>
+                <button onClick={() => setLegend(!legend)} className="flex items-center gap-1.5 link-pink"
+                   style={{ fontSize: 14, fontWeight: 600, whiteSpace: "nowrap" }}>
+                  <Info size={15} /> {legend ? "Masquer" : "En savoir plus"}
+                </button>
+              </div>
+
+              {legend && (
+                <div className="mt-2" style={{ background: C.bleuSoft, borderRadius: R.lg, padding: "16px 18px", display: "grid", gap: 11 }}>
+                  {FAM_ORDER.map((k) => (
+                    <div key={k} className="flex gap-2.5 items-start">
+                      <span style={{ width: 11, height: 11, borderRadius: 99, background: FAM[k].color, marginTop: 7, flexShrink: 0 }} />
+                      <p style={{ fontSize: 16, lineHeight: 1.45 }}>
+                        <strong style={{ fontWeight: 700 }}>{FAM[k].label}</strong>
+                        <span style={{ color: C.encre }}> — {FAM[k].sub}</span>
+                        <span style={{ color: C.rose, fontSize: 12, fontWeight: 600 }}>{`  ${counts[k]} cartes`}</span>
+                      </p>
+                    </div>
+                  ))}
+                  <p style={{ fontSize: 13.5, color: C.muted, borderTop: `1px solid ${C.ligne}`, paddingTop: 10, lineHeight: 1.6 }}>
+                    Une carte peut changer de famille à tout moment : ouvrez-la avec le crayon, la famille est le premier champ.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between mt-2" style={{ fontSize: 11.5, color: C.muted }}>
+                <span>{shown.length} carte{shown.length > 1 ? "s" : ""} affichée{shown.length > 1 ? "s" : ""}</span>
+                <span className="flex items-center gap-3">
+                  <span>{status}</span>
+                  {unlocked && (
+                    <button onClick={lock} className="link-pink" style={{ textDecoration: "underline" }}>verrouiller l’édition</button>
+                  )}
+                  <button onClick={guard(resetAll)} className="link-pink" style={{ textDecoration: "underline" }}>tout réinitialiser</button>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* ---------- grille ---------- */}
+          <main className="px-5 py-7" style={{ maxWidth: 1240, margin: "0 auto" }}>
+            <div className="grid gap-5" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(288px, 1fr))" }}>
+              {shown.map((c) => (
+                <CardView key={c.id} card={c} flipped={flipped.has(c.id)}
+                  onFlip={() => toggleFlip(c.id)} onEdit={guard(() => setEditing(c))} edited={isEdited(c)} />
+              ))}
+            </div>
+            {!shown.length && (
+              <p style={{ color: C.muted, padding: "40px 0", textAlign: "center" }}>
+                Aucune carte ne correspond. Essayez un autre mot, ou changez de famille.
+              </p>
+            )}
+            <footer className="eyebrow" style={{ marginTop: 56, borderTop: `2px solid ${C.noir}`, paddingTop: 18, color: C.muted, lineHeight: 1.8 }}>
+CAUSONS IA · JEU DE CARTES DE CONVERSATION SUR L’IA · IAGORA / AMUSEURS<br />ÉDITION DE TRAVAIL — VÉRIFIER LES CHIFFRES AVANT IMPRESSION
+            </footer>
+          </main>
+        </>
+      )}
+
+      {pendingAction && (
+        <PasswordPrompt onCancel={() => setPendingAction(null)} onSuccess={unlock} />
+      )}
+
+      {editing && unlocked && (
+        <Editor card={editing} onClose={() => setEditing(null)}
+          onSave={(c) => { saveCard(c); setEditing(c); }}
+          onDelete={() => deleteCard(editing.id)}
+          onDuplicate={() => duplicateCard(editing)}
+          onReset={() => resetCard(editing.id)}
+          resettable={original[editing.id] !== undefined} />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------ UI atomes ------------------------------ */
+
+function TopBtn({ onClick, icon: Icon, label, active }) {
+  return (
+    <button onClick={onClick} className="flex items-center gap-2 px-4 py-2.5 btn-top"
+      style={{
+        background: active ? C.bleu : C.page, color: active ? "#fff" : C.encre,
+        border: `2px solid ${active ? C.bleu : C.noir}`, borderRadius: R.pill,
+        fontSize: 13, fontWeight: 600, transition: `background .12s ${EASE}, color .12s ${EASE}, border-color .12s ${EASE}`,
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = C.rose; e.currentTarget.style.color = "#000"; e.currentTarget.style.borderColor = C.rose; }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = active ? C.bleu : C.page;
+        e.currentTarget.style.color = active ? "#fff" : C.encre;
+        e.currentTarget.style.borderColor = active ? C.bleu : C.noir;
+      }}>
+      <Icon size={15} strokeWidth={2} /> {label}
+    </button>
+  );
+}
+
+function Chip({ active, onClick, label, color, dark }) {
+  return (
+    <button onClick={onClick} className="flex items-center gap-2 px-3.5 py-2"
+      style={{
+        background: active ? color : C.page, color: active && dark ? "#fff" : C.encre,
+        border: `2px solid ${active ? color : C.ligne}`, borderRadius: R.pill,
+        fontSize: 13, fontWeight: 600, whiteSpace: "nowrap",
+        transition: `background .12s ${EASE}, border-color .12s ${EASE}`,
+      }}>
+      <span style={{ width: 9, height: 9, borderRadius: R.pill, background: active ? (dark ? "#fff" : C.noir) : color, display: "inline-block" }} />
+      {label}
+    </button>
+  );
+}
+
+function SmallBtn({ onClick, icon: Icon, label }) {
+  return (
+    <button onClick={onClick} title={label} className="flex items-center gap-1.5 px-3 py-2 link-pink"
+      style={{ background: C.page, border: `2px solid ${C.ligne}`, borderRadius: R.pill, fontSize: 12.5, fontWeight: 600, color: C.encre }}>
+      <Icon size={14} strokeWidth={2} /> <span className="hidden sm:inline">{label}</span>
+    </button>
+  );
+}
+
+function ExportMenu({ onExport }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const k = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", h);
+    document.addEventListener("keydown", k);
+    return () => { document.removeEventListener("mousedown", h); document.removeEventListener("keydown", k); };
+  }, [open]);
+
+  const Item = ({ kind, label, hint }) => (
+    <button className="menu-item w-full text-left px-3 py-2.5"
+      onClick={() => { setOpen(false); onExport(kind); }} style={{ borderRadius: R.sm }}>
+      <div style={{ fontSize: 13.5, fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 11.5, color: C.muted, marginTop: 1 }}>{hint}</div>
+    </button>
+  );
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button onClick={() => setOpen(!open)} title="Exporter" aria-expanded={open}
+        className="flex items-center gap-1.5 px-3 py-2"
+        style={{
+          background: open ? C.bleu : C.page, color: open ? "#fff" : C.encre,
+          border: `2px solid ${open ? C.bleu : C.ligne}`, borderRadius: R.pill, fontSize: 12.5, fontWeight: 600,
+        }}>
+        <Download size={14} strokeWidth={2} /> <span className="hidden sm:inline">Exporter</span>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", right: 0, top: "calc(100% + 8px)", width: 248, background: C.page,
+          border: `2px solid ${C.noir}`, borderRadius: R.md, padding: 6, zIndex: 40, boxShadow: SH.lg,
+        }}>
+          <Item kind="xlsx" label="Excel (.xlsx)" hint="Deux onglets : cartes + à vérifier" />
+          <Item kind="csv" label="CSV (.csv)" hint="Point-virgule, accents conservés" />
+          <Item kind="json" label="JSON (.json)" hint="Pour réimporter dans l’appli" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------ la carte ------------------------------ */
+
+function CardView({ card, flipped, onFlip, onEdit, edited }) {
+  const f = famOf(card.fam);
+  const H = 470;
+  const faceBase = {
+    position: "absolute", inset: 0, background: C.bleuSoft, borderRadius: R.lg,
+    overflow: "hidden", cursor: "pointer", display: "flex", flexDirection: "column",
+    boxShadow: SH.sm,
+  };
+  return (
+    <div style={{ perspective: 1600 }}>
+      <div className={`flip ${flipped ? "on" : ""}`} style={{ position: "relative", height: H }}>
+
+        {/* ---------------- RECTO ---------------- */}
+        <div className="face lift" role="button" tabIndex={0}
+          onClick={onFlip}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onFlip(); } }}
+          style={faceBase}>
+          <div className="flex items-start justify-between px-6 pt-5">
+            <span className="eyebrow" style={{ color: C.rose }}>NUMÉRO {num(card.id)}</span>
+            <span className="eyebrow" style={{ color: f.deep }}>{f.label.toUpperCase()}</span>
+          </div>
+
+          <div className="px-6 flex-1" style={{ paddingTop: 22 }}>
+            <p className="display" style={{
+              color: C.bleu,
+              fontSize: card.recto.length > 74 ? 27 : card.recto.length > 52 ? 31 : 35,
+            }}>
+              {card.recto}
+            </p>
+          </div>
+
+          <div className="px-6 pb-5 flex items-center justify-between">
+            <span style={{ fontSize: 11.5, color: C.muted }}>
+              {edited ? "Modifiée · " : ""}Cliquez pour retourner
+            </span>
+            <button onClick={(e) => { e.stopPropagation(); onEdit(); }} aria-label="Modifier cette carte"
+              className="icon-btn" style={{ borderRadius: R.pill, padding: 7, background: C.page }}>
+              <Pencil size={13} strokeWidth={2} />
+            </button>
+          </div>
+          <div style={{ height: 6, background: f.color }} />
+        </div>
+
+        {/* ---------------- VERSO ---------------- */}
+        <div className="face back" role="button" tabIndex={-1} onClick={onFlip}
+          style={{ ...faceBase, background: C.page, border: `2px solid ${C.noir}` }}>
+          <div className="px-5 pt-4 pb-3">
+            <div className="eyebrow" style={{ color: f.deep }}>{card.titre.toUpperCase()}</div>
+          </div>
+
+          <div className="px-5 fade-b" style={{ overflowY: "auto", flex: 1, fontSize: 13.5, lineHeight: 1.6 }}>
+            {card.verso && (
+              <p style={{ background: C.bleuSoft, borderRadius: R.md, padding: "11px 13px", fontWeight: 500 }}>
+                {card.verso}
+              </p>
+            )}
+
+            {card.items && card.items.length > 0 && (
+              <ol style={{ background: C.bleuSoft, borderRadius: R.md, padding: "11px 13px", marginTop: card.verso ? 8 : 0, listStyle: "none" }}>
+                {card.items.map((it, i) => (
+                  <li key={i} className="flex gap-2" style={{ marginTop: i ? 7 : 0, fontWeight: 500 }}>
+                    <span style={{ color: C.bleu, flexShrink: 0, fontWeight: 700 }}>{i + 1}.</span>
+                    <span>{it}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
+
+            {card.relance && (
+              <div style={{ marginTop: 11, borderLeft: `3px solid ${C.bleu}`, paddingLeft: 11 }}>
+                <div className="eyebrow" style={{ color: C.bleu }}>RELANCE</div>
+                <p style={{ fontStyle: "italic", marginTop: 3 }}>« {card.relance} »</p>
+                {card.relance2 && <p style={{ fontStyle: "italic", marginTop: 4, color: C.muted }}>« {card.relance2} »</p>}
+              </div>
+            )}
+
+            {card.piste && (
+              <div style={{ marginTop: 10, borderLeft: `3px solid ${f.color}`, paddingLeft: 11 }}>
+                <div className="eyebrow" style={{ color: f.deep }}>PISTE</div>
+                <p style={{ marginTop: 3 }}>{card.piste}</p>
+              </div>
+            )}
+
+            {card.sources && card.sources.length > 0 && (
+              <div style={{ marginTop: 12, paddingTop: 9, borderTop: `1px solid ${C.ligne}` }}>
+                {card.sources.map((x, i) => (
+                  <div key={i} className="flex gap-1.5" style={{ marginTop: i ? 5 : 0 }}>
+                    <span style={{ color: C.rose, flexShrink: 0, lineHeight: 1.4 }}>★</span>
+                    <div style={{ fontSize: 11, lineHeight: 1.4 }}>
+                      <span style={{ fontWeight: 600, color: C.encre }}>{x.label}</span>
+                      {x.url && (
+                        <>
+                          <br />
+                          <a className="src" href={x.url} target="_blank" rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{ fontSize: 10, color: C.bleu, wordBreak: "break-all" }}>
+                            {x.url}
+                          </a>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {card.duo && (
+              <p className="eyebrow" style={{ color: C.muted, marginTop: 10, marginBottom: 2 }}>
+                À JOUER EN DUO AVEC LA CARTE N° {num(card.duo)}
+              </p>
+            )}
+            <div style={{ height: 10 }} />
+          </div>
+
+          <div className="px-5 py-2.5 flex items-center justify-between" style={{ borderTop: `1px solid ${C.ligne}` }}>
+            <span className="eyebrow" style={{ color: C.bleu }}>CAUSONS IA</span>
+            <button onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              className="flex items-center gap-1.5 link-pink" style={{ fontSize: 12, fontWeight: 600 }}>
+              <Pencil size={12} strokeWidth={2} /> Modifier
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------ éditeur ------------------------------ */
+
+function Editor({ card, onClose, onSave, onDelete, onDuplicate, onReset, resettable }) {
+  const [d, setD] = useState({ ...card, items: card.items || [], sources: card.sources || [] });
+  useEffect(() => { setD({ ...card, items: card.items || [], sources: card.sources || [] }); }, [card.id]);
+  const set = (k, v) => setD((o) => ({ ...o, [k]: v }));
+  const f = famOf(d.fam);
+
+  const save = () => {
+    const clean = {
+      ...d,
+      items: (d.items || []).map((s) => s.trim()).filter(Boolean),
+      sources: (d.sources || []).filter((s) => (s.label || "").trim() || (s.url || "").trim()),
+    };
+    onSave(clean);
+  };
+
+  return (
+    <div className="noprint" onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(20,20,43,.55)", zIndex: 60, display: "flex", justifyContent: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ background: "#fff", width: "min(560px, 100%)", height: "100%", overflowY: "auto", boxShadow: "-20px 0 60px rgba(20,20,43,.3)" }}>
+        <div className="px-6 py-4 flex items-center justify-between"
+          style={{ position: "sticky", top: 0, background: "#fff", borderBottom: `1px solid ${C.ligne}`, zIndex: 2 }}>
+          <div>
+            <div className="eyebrow" style={{ color: C.rose }}>MODIFIER LA CARTE N° {num(d.id)}</div>
+            <div className="display" style={{ fontSize: 22, color: C.bleu, marginTop: 4 }}>{d.titre || "Sans titre"}</div>
+          </div>
+          <button onClick={onClose} aria-label="Fermer" style={{ padding: 8 }}><X size={18} /></button>
+        </div>
+
+        <div className="px-6 py-5" style={{ display: "grid", gap: 16 }}>
+          <Field label="Famille">
+            <select value={d.fam} onChange={(e) => set("fam", e.target.value)} style={inp}>
+              {FAM_ORDER.map((k) => <option key={k} value={k}>{FAM[k].label} — {FAM[k].sub}</option>)}
+            </select>
+          </Field>
+
+          <Field label="Niveau (piste de ski, facultatif)">
+              <select value={d.niveau || ""} onChange={(e) => set("niveau", e.target.value)} style={inp}>
+                <option value="">— aucun —</option>
+                <option value="verte">verte (facile)</option>
+                <option value="bleue">bleue (intermédiaire)</option>
+                <option value="rouge">rouge (costaud)</option>
+              </select>
+          </Field>
+
+          <Field label="Titre (interne, imprimé au verso)">
+            <input value={d.titre} onChange={(e) => set("titre", e.target.value)} style={inp} />
+          </Field>
+
+          <Field label="RECTO — l’accroche, lisible en 3 secondes" hint="Court. Une question de préférence.">
+            <textarea value={d.recto} onChange={(e) => set("recto", e.target.value)} rows={3} className="ta" style={inp} />
+          </Field>
+
+          <Field label="VERSO — le fait, le chiffre, l’exemple" hint="2 à 4 lignes maximum.">
+            <textarea value={d.verso || ""} onChange={(e) => set("verso", e.target.value)} rows={6} className="ta" style={inp} />
+          </Field>
+
+          <Field label="Items (mini-jeux, listes)" hint="Une ligne = un item. Laissez vide si la carte n’en a pas.">
+            <textarea value={(d.items || []).join("\n")}
+              onChange={(e) => set("items", e.target.value.split("\n"))}
+              rows={Math.max(3, (d.items || []).length + 1)} className="ta" style={inp} />
+          </Field>
+
+          <Field label="Sources" hint="Le libellé s’affiche en clair, l’URL en petit dessous.">
+            <div style={{ display: "grid", gap: 8 }}>
+              {(d.sources || []).map((s, i) => (
+                <div key={i} className="flex gap-2 items-start">
+                  <div style={{ flex: 1, display: "grid", gap: 5 }}>
+                    <input value={s.label} placeholder="ex. CNIL, 2025"
+                      onChange={(e) => { const n = [...d.sources]; n[i] = { ...n[i], label: e.target.value }; set("sources", n); }}
+                      style={inp} />
+                    <input value={s.url} placeholder="https://…"
+                      onChange={(e) => { const n = [...d.sources]; n[i] = { ...n[i], url: e.target.value }; set("sources", n); }}
+                      style={{ ...inp, fontSize: 11.5, color: C.bleu }} />
+                  </div>
+                  <button onClick={() => set("sources", d.sources.filter((_, j) => j !== i))}
+                    aria-label="Supprimer la source" style={{ padding: 8, marginTop: 4 }}>
+                    <Trash2 size={15} color={C.muted} />
+                  </button>
+                </div>
+              ))}
+              <button onClick={() => set("sources", [...(d.sources || []), { label: "", url: "" }])}
+                className="flex items-center gap-1.5 px-3 py-2"
+                style={{ border: `2px dashed ${C.ligne}`, borderRadius: R.md, fontSize: 13, fontWeight: 600, width: "fit-content" }}>
+                <Plus size={14} /> Ajouter une source
+              </button>
+            </div>
+          </Field>
+
+          <Field label="Relance animateur">
+            <textarea value={d.relance || ""} onChange={(e) => set("relance", e.target.value)} rows={2} className="ta" style={inp} />
+          </Field>
+          <Field label="Relance 2 (si la personne accroche)">
+            <textarea value={d.relance2 || ""} onChange={(e) => set("relance2", e.target.value)} rows={2} className="ta" style={inp} />
+          </Field>
+          <Field label="Piste / astuce concrète">
+            <textarea value={d.piste || ""} onChange={(e) => set("piste", e.target.value)} rows={3} className="ta" style={inp} />
+          </Field>
+          <Field label="Carte en duo (numéro)" hint="Pour signaler une carte complémentaire.">
+            <input value={d.duo || ""} onChange={(e) => set("duo", e.target.value ? Number(e.target.value) : undefined)}
+              type="number" style={inp} />
+          </Field>
+        </div>
+
+        <div className="px-6 py-4 flex flex-wrap items-center gap-2"
+          style={{ position: "sticky", bottom: 0, background: "#fff", borderTop: `1px solid ${C.ligne}` }}>
+          <button onClick={save} className="flex items-center gap-2 px-4 py-2.5 btn-save"
+             style={{ background: C.bleu, color: "#fff", borderRadius: R.pill, fontWeight: 600, fontSize: 14, border: `2px solid ${C.bleu}` }}>
+            <Check size={16} strokeWidth={2} /> Enregistrer
+          </button>
+          <button onClick={onDuplicate} className="px-3 py-2.5" style={{ border: `2px solid ${C.ligne}`, borderRadius: R.pill, fontSize: 13, fontWeight: 600 }}>
+            Dupliquer
+          </button>
+          {resettable && (
+            <button onClick={onReset} className="px-3 py-2.5" style={{ border: `2px solid ${C.ligne}`, borderRadius: R.pill, fontSize: 13, fontWeight: 600 }}>
+              Version d’origine
+            </button>
+          )}
+          <button onClick={onDelete} className="px-3 py-2.5 ml-auto"
+            style={{ border: `2px solid ${C.ligne}`, borderRadius: R.pill, fontSize: 13, fontWeight: 600, color: "#D62E2E" }}>
+            Supprimer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const inp = {
+  width: "100%", padding: "10px 12px", border: `2px solid ${C.ligne}`, borderRadius: R.md,
+  fontSize: 14, fontFamily: F_BODY, color: C.encre, background: C.page, outline: "none", lineHeight: 1.6,
+};
+
+function PasswordPrompt({ onCancel, onSuccess }) {
+  const [pwd, setPwd] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef(null);
+  useEffect(() => { inputRef.current && inputRef.current.focus(); }, []);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onCancel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!window.crypto || !crypto.subtle) {
+      setErr("Vérification impossible : ouvrez la page en https ou en local.");
+      return;
+    }
+    setBusy(true);
+    const ok = (await sha256(pwd)) === EDIT_HASH;
+    setBusy(false);
+    if (ok) onSuccess();
+    else { setErr("Mot de passe incorrect."); setPwd(""); inputRef.current && inputRef.current.focus(); }
+  };
+
+  return (
+    <div className="noprint" onClick={onCancel}
+      style={{ position: "fixed", inset: 0, background: "rgba(20,20,43,.55)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <form onSubmit={submit} onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true" aria-labelledby="pwd-title"
+        style={{ background: "#fff", width: "min(420px, 100%)", borderRadius: R.lg, padding: "24px 24px 20px", boxShadow: SH.lg }}>
+        <div className="eyebrow" style={{ color: C.rose }}>ÉDITION PROTÉGÉE</div>
+        <h2 id="pwd-title" className="display" style={{ fontSize: 30, color: C.bleu, margin: "8px 0 10px" }}>
+          Mot de passe
+        </h2>
+        <p style={{ fontSize: 14.5, lineHeight: 1.55, marginBottom: 14 }}>
+          La modification des cartes est réservée à l’équipe. Saisissez le mot de passe pour continuer.
+        </p>
+        <input ref={inputRef} type="password" value={pwd} autoComplete="current-password"
+          aria-label="Mot de passe d’édition" aria-invalid={!!err} aria-describedby={err ? "pwd-err" : undefined}
+          onChange={(e) => { setPwd(e.target.value); setErr(""); }}
+          style={{ width: "100%", border: `2px solid ${err ? C.roseDeep : C.ligne}`, borderRadius: R.md, padding: "10px 12px", fontSize: 15, fontFamily: F_BODY, outline: "none" }} />
+        {err && <p id="pwd-err" role="alert" style={{ color: C.roseDeep, fontSize: 13.5, marginTop: 8 }}>{err}</p>}
+        <div className="flex justify-end gap-2" style={{ marginTop: 18 }}>
+          <button type="button" onClick={onCancel} className="link-pink" style={{ fontSize: 14, fontWeight: 600, padding: "8px 12px" }}>
+            Annuler
+          </button>
+          <button type="submit" disabled={busy || !pwd}
+            style={{ background: C.bleu, color: "#fff", fontSize: 14, fontWeight: 600, padding: "9px 18px", borderRadius: R.pill, opacity: busy || !pwd ? 0.55 : 1 }}>
+            {busy ? "Vérification…" : "Déverrouiller"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function Field({ label, hint, children }) {
+  return (
+    <label style={{ display: "block" }}>
+      <div className="eyebrow" style={{ fontSize: 10.5, color: C.bleu }}>{label}</div>
+      {hint && <div style={{ fontSize: 11.5, color: C.muted, marginTop: 2, marginBottom: 5 }}>{hint}</div>}
+      <div style={{ marginTop: hint ? 0 : 5 }}>{children}</div>
+    </label>
+  );
+}
+
+/* ------------------------------ panneaux ------------------------------ */
+
+function Panel({ title, kicker, onClose, children }) {
+  return (
+    <div className="px-5 py-8" style={{ maxWidth: 900, margin: "0 auto" }}>
+      <button onClick={onClose} className="noprint flex items-center gap-2 mb-5 eyebrow link-pink"
+        style={{ color: C.muted }}>
+        <ArrowLeft size={14} strokeWidth={2} /> Retour aux cartes
+      </button>
+      <div className="eyebrow" style={{ fontSize: 13, color: C.rose }}>{kicker}</div>
+      <h2 className="display" style={{ fontSize: "clamp(32px,3.4vw,56px)", color: C.bleu, margin: "8px 0 26px" }}>
+        {title}
+      </h2>
+      {children}
+    </div>
+  );
+}
+
+function GuidePanel({ onClose }) {
+  return (
+    <Panel kicker="À LIRE AVANT D’OUVRIR LE STAND" title="Guide animateur" onClose={onClose}>
+      <div style={{ display: "grid", gap: 16 }}>
+        {GUIDE.map((g, i) => (
+          <section key={i} style={{ background: C.bleuSoft, borderRadius: R.lg, padding: "18px 20px" }}>
+            <h3 className="display" style={{ fontSize: 20, color: C.bleu, marginBottom: 8 }}>{g.t}</h3>
+            {g.p && <p style={{ fontSize: 15, lineHeight: 1.65 }}>{g.p}</p>}
+            {g.l && (
+              <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 7 }}>
+                {g.l.map((x, j) => (
+                  <li key={j} className="flex gap-2.5" style={{ fontSize: 15, lineHeight: 1.6 }}>
+                    <span style={{ color: C.rose, fontWeight: 700 }}>★</span><span>{x}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ))}
+        <section style={{ background: C.bleu, color: "#fff", borderRadius: R.lg, padding: "20px 22px" }}>
+          <h3 className="display" style={{ fontSize: 20, marginBottom: 8 }}>Règle du jeu, en trois lignes.</h3>
+          <p style={{ fontSize: 15, lineHeight: 1.65 }}>
+            Piochez une carte, lisez l’accroche à voix haute. Donnez votre premier avis, ou racontez une expérience.
+            L’animateur relance une ou deux fois — puis on repose la carte et on en pioche une autre quand on veut.
+            Il n’y a pas de gagnant : le but, c’est la conversation.
+          </p>
+        </section>
+      </div>
+    </Panel>
+  );
+}
+
+function VerifPanel({ onClose }) {
+  const Block = ({ title, items, color }) => (
+    <section style={{ background: C.bleuSoft, borderRadius: R.lg, padding: "18px 20px" }}>
+      <h3 className="display flex items-center gap-2.5" style={{ fontSize: 20, color: C.bleu, marginBottom: 10 }}>
+        <span style={{ width: 11, height: 11, borderRadius: R.pill, background: color, display: "inline-block" }} />{title}
+      </h3>
+      <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 6 }}>
+        {items.map((x, i) => <li key={i} className="flex gap-2" style={{ fontSize: 14.5, lineHeight: 1.6 }}><span style={{ color: C.rose }}>★</span><span>{x}</span></li>)}
+      </ul>
+    </section>
+  );
+  return (
+    <Panel kicker="AVANT D’ENVOYER À L’IMPRESSION" title="Ce qui est solide, ce qui bouge" onClose={onClose}>
+      <div style={{ display: "grid", gap: 16 }}>
+        <Block title="Chiffres solides et sourcés" items={VERIF.solides} color={FAM.vert.color} />
+        <Block title="Chiffres fragiles ou périssables" items={VERIF.fragiles} color={FAM.rouge.color} />
+        <Block title="Cartes sans lien : rien à sourcer" items={VERIF.sansLien} color={FAM.jeu.color} />
+        <p style={{ fontSize: 14.5, color: C.muted, lineHeight: 1.65 }}>
+          Conseil : datez le paquet (« édition octobre 2026 ») et prévoyez une réédition rapide.
+          Une quinzaine de cartes reposent sur une actualité mouvante.
+        </p>
+      </div>
+    </Panel>
+  );
+}
+
+/* ------------------------------ impression ------------------------------ */
+
+function PrintSheet({ cards, onClose }) {
+  return (
+    <div className="px-5 py-8" style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <div className="noprint flex flex-wrap items-center justify-between gap-3 mb-6">
+        <button onClick={onClose} className="flex items-center gap-2 eyebrow link-pink"
+          style={{ color: C.muted }}>
+          <ArrowLeft size={14} strokeWidth={2} /> Retour aux cartes
+        </button>
+        <div className="flex items-center gap-3">
+          <p style={{ fontSize: 13, color: C.muted, maxWidth: 460 }}>
+            Deux cartes par ligne, pliage sur le pointillé : le haut fait le recto, le bas le verso.
+            Imprimez en A4, marges 10 mm.
+          </p>
+          <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2.5"
+            style={{ background: C.bleu, color: "#fff", border: `2px solid ${C.bleu}`, borderRadius: R.pill, fontWeight: 600, fontSize: 14 }}>
+            <Printer size={16} strokeWidth={2} /> Imprimer
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
+        {cards.map((c) => {
+          const f = famOf(c.fam);
+          return (
+            <div key={c.id} className="sheet" style={{ border: `2px solid ${C.noir}`, borderRadius: R.md, overflow: "hidden", background: C.page }}>
+              <div style={{ padding: "9px 11px 11px", background: C.bleuSoft }}>
+                <div className="flex items-center justify-between eyebrow" style={{ fontSize: 8 }}>
+                  <span style={{ color: C.rose }}>NUMÉRO {num(c.id)}</span>
+                  <span style={{ color: f.deep }}>{f.label.toUpperCase()}</span>
+                </div>
+                <p className="display" style={{ fontSize: 16, marginTop: 7, color: C.bleu }}>{c.recto}</p>
+              </div>
+
+              <div style={{ borderTop: `2px dashed ${C.noir}`, padding: "9px 11px 11px", fontSize: 9.5, lineHeight: 1.5 }}>
+                <div className="eyebrow" style={{ fontSize: 8, color: f.deep }}>{c.titre.toUpperCase()}</div>
+                {c.verso && <p style={{ marginTop: 4 }}>{c.verso}</p>}
+                {c.items && c.items.length > 0 && (
+                  <ol style={{ margin: "4px 0 0", paddingLeft: 14 }}>
+                    {c.items.map((it, i) => <li key={i} style={{ marginTop: 2 }}>{it}</li>)}
+                  </ol>
+                )}
+                {c.sources && c.sources.length > 0 && (
+                  <div style={{ marginTop: 5 }}>
+                    {c.sources.map((s, i) => (
+                      <div key={i} style={{ fontSize: 7.8, color: C.muted, wordBreak: "break-all", lineHeight: 1.4 }}>
+                        <span style={{ color: C.rose }}>★ </span><strong>{s.label}</strong>{s.url ? " — " + s.url : ""}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {c.relance && <p style={{ marginTop: 6, fontStyle: "italic", borderLeft: `2px solid ${C.bleu}`, paddingLeft: 6 }}>« {c.relance} »</p>}
+                {c.relance2 && <p style={{ marginTop: 2, fontStyle: "italic", color: C.muted }}>→ « {c.relance2} »</p>}
+                {c.piste && (
+                  <p style={{ marginTop: 6, borderLeft: `2px solid ${f.color}`, paddingLeft: 6 }}>
+                    <strong className="eyebrow" style={{ fontSize: 8, color: f.deep }}>PISTE </strong>{c.piste}
+                  </p>
+                )}
+                {c.duo && <p className="eyebrow" style={{ marginTop: 5, fontSize: 7.8, color: C.muted }}>DUO AVEC LA CARTE N° {num(c.duo)}</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<CausonsIA />);
+</script>
+</body>
+</html>
+
